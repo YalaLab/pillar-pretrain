@@ -1,0 +1,32 @@
+merlin_abd_ct:
+  image_size: 384
+  modality: abdomen_ct
+  args:
+    train_data : data/merlin/merlin_abd_ct/train.json
+    val_data : data/merlin/merlin_abd_ct/valid.json
+    model: Qwen3-Embedding-8B-Atlas_ps16x16_d2d2d8_multiscale_multimodal_abd_ct_11ch
+    csv_img_key: nii_path
+    csv_caption_key: report_metadata
+    csv_separator: ","
+    medcsv_caption_transform: capitalize_title
+    # medcsv_data_root: data/cache/merlin_r384_torch
+    # cache_dir: data/cache/merlin_r384_torch
+    image_mean: 0.289
+    image_std: 0.198
+    medcsv_target_d: 384 
+    target_hw: 384
+    medcsv_pad_value: -1024
+    batch_size: 2
+    val_batch_size: 4
+    workers: 2  # Reduced for better GPU utilization with transforms
+    # RVE configuration
+    # Note: Using CPU decode (26x faster than GPU decode due to YUV format issues)
+    use_rve: true
+    rve_dir: ./data/merlin/merlin_cache_1.5mm
+    rve_manifest: ./data/merlin/merlin_cache_1.5mm/mapping.csv
+    # Windowing configuration (set to all by default)
+    window_type: all
+    # Cache configuration
+    text_cache_dir: ./data/text_cache_qwen3_embedding_8b
+    # Disable regular cache to force RVE usage
+    use_cache: false

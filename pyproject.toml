@@ -1,0 +1,124 @@
+[build-system]
+requires = ["pdm-backend"]
+build-backend = "pdm.backend"
+
+[project]
+name = "miniclip"
+# NOTE for full list of authors see https://github.com/mlfoundations/miniclip?tab=readme-ov-file#citing
+# below covers most active / recent maintainers
+authors = [
+    {name = "Ross Wightman", email = "ross@huggingface.co"},
+    {name = "Gabriel Ilharco"},
+    {name = "Mitchell Wortsman"},
+    {name = "Romain Beaumont"},
+]
+description = "Open reproduction of consastive language-image pretraining (CLIP) and related."
+readme = "README.md"
+requires-python = ">=3.9"
+keywords = ["pytorch", "clip", "image-text", "language-image", "multimodal"]
+license = {text = "MIT"}
+classifiers = [
+        'Development Status :: 4 - Beta',
+        'Intended Audience :: Education',
+        'Intended Audience :: Science/Research',
+        'License :: OSI Approved :: MIT License',
+        'Programming Language :: Python :: 3.9',
+        'Programming Language :: Python :: 3.10',
+        'Programming Language :: Python :: 3.11',
+        'Programming Language :: Python :: 3.12',
+        'Topic :: Scientific/Engineering',
+        'Topic :: Scientific/Engineering :: Artificial Intelligence',
+        'Topic :: Software Development',
+        'Topic :: Software Development :: Libraries',
+        'Topic :: Software Development :: Libraries :: Python Modules',
+]
+dependencies = [
+    'regex',
+    'ftfy',
+    'tqdm',
+    "huggingface-hub[cli]",
+    'safetensors',
+    'timm',
+    'transformers',
+    "lifelines",
+    'torchmetrics==0.7.0',
+    'braceexpand',
+    'wandb',
+    "hf-transfer>=0.1.9",
+    "einops>=0.8.1",
+    "webdataset>=0.2.86",
+    "joblib>=1.4.2",
+    "opencv-python>=4.12.0.88",
+    "pdm>=2.20.1",
+    "pdm-backend>=2.4.3",
+    "nvitop>=1.5.1",
+    "pip>=25.1.1",
+    "nibabel>=5.3.2",
+    "scikit-image>=0.24.0",
+    "ray>=2.48.0",
+    "scikit-learn>=1.6.1",
+    "expecttest>=0.3.0",
+    "jupyterlab>=4.4.7",
+    "deepspeed>=0.17.6",
+    "kornia>=0.8.1",
+    "seaborn>=0.13.2",
+    "flash-attn>=2.8.3",
+]
+dynamic = ["version"]
+
+[project.optional-dependencies]
+training = [
+    'webdataset>=0.2.5,<=0.2.86',
+    'pandas',
+    'transformers[sentencepiece]',
+    'timm>=1.0.10',
+    'fsspec',
+]
+test = [
+    'pytest-split',
+    'pytest',
+    'miniclip[training]'
+]
+dev = [
+    "ruff>=0.4.9",
+]
+
+[tool.pdm.version]
+source = "file"
+path = "src/miniclip/version.py"
+
+[tool.pdm.build]
+excludes = ["./**/.git", "./**/logs/*"]
+package-dir = "src"
+includes = ["src/miniclip", "src/trainer"]
+
+[tool.pytest.ini_options]
+testpaths = ['tests']
+markers = [
+    'regression_test'
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+src = ["src"]
+extend-exclude = [
+    "logs",
+    "wandb",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",
+    "F",
+    "W",
+    "B",
+    "I",
+    "UP",
+]
+ignore = [
+    "E501",
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["miniclip", "trainer"]

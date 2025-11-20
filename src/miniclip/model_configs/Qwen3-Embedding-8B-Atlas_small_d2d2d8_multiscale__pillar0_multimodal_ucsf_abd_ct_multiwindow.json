@@ -1,0 +1,65 @@
+{
+    "embed_dim": 1152,
+    "vision_cfg": {
+      "model_name": "multimodal_atlas",
+      "type_3d": true,
+      "image_size": [384, 384, 384],
+      "frames": 1,
+      "layers": 12,
+      "width": 96,
+      "patch_size": [6, 6, 6],
+      "merge_ratio": [4, 4, 4],
+      "in_chans": 1,
+      "num_classes": 0,
+      "model_config": {
+        "modalities": {
+          "abdomen_ct": {
+            "image_size": [384, 384, 384],
+            "in_chans": 11,
+            "local2global": [4, 4, 4],
+            "merge_ratio": [4, 4, 4],
+            "num_features": 192,
+            "patch_size": [6, 6, 6]
+          }
+        },
+        "model": {
+          "atlas_args": {
+            "attn_drop": 0.0,
+            "class_token": false,
+            "depth": 8,
+            "dim": 384,
+            "drop": 0.0,
+            "drop_path_rate": 0.3,
+            "embed_dim": 384,
+            "global_pool": "avg",
+            "in_chans": 1,
+            "in_dim": 64,
+            "mlp_ratio": 4.0,
+            "num_classes": 0,
+            "num_features": 192,
+            "num_heads": 6,
+            "num_scales": 3,
+            "pre_norm": false,
+            "qk_scale": false,
+            "qkv_bias": true
+          },
+          "stages": [
+            2,
+            2,
+            8
+          ]
+        }
+      }
+    },
+    "text_cfg": {
+        "hf_model_name": "./cached_text_embedding/Qwen3-Embedding-8B",
+        "hf_proj_type": "mlp",
+        "text_model_embedding_dim": 4096,
+        "vocab_size": 151936,
+        "context_length": 32768
+    }
+}
+
+
+
+

@@ -1,0 +1,79 @@
+# Logs and monitoring
+logs/**
+wandb/**
+
+# Python cache
+**/__pycache__/**
+*.py[cod]
+*$py.class
+
+# Cache directories
+**/cache/**
+**/*_cache/**
+**/cached_*/**
+**/embedding_cache/**
+**/validation_*_cache/**
+**/mimic_*_cache/**
+**/medgemma_cache/**
+**/qwen*_cache/**
+**/roberta_*_cache/**
+**/test_cache_*/**
+**/cached_text_embedding/**
+
+# Test directories
+**/test_*/**
+**/validation_*/**
+**/test_cache_*/**
+**/validation_qwen_cache/**
+
+# Model and data caches
+**/embeddings/**
+**/model_cache/**
+**/data_cache/**
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+
+# IDE files
+.vscode/
+.idea/
+*.sublime-*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Virtual environment
+.venv
+venv/
+env/
+
+# Jupyter notebooks checkpoints
+.ipynb_checkpoints/
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+
+# Coverage reports
+htmlcov/
+.coverage
+.coverage.*
+
+# pytest
+.pytest_cache/
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+text_cache_qwen3_embedding_8b
+
+data
+
+*_ignored*

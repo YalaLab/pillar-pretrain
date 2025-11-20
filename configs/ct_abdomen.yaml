@@ -1,0 +1,26 @@
+# Vision-engine configuration for CT abdomen
+# Single canonical configuration with clean structure
+
+modality: CT
+anatomy: abdomen
+
+# Modality-specific processing settings
+processing:
+  crop_pad:
+    size: [384, 384]  # Target size (H, W) - crop or pad to this
+  resampling:
+    target_spacing: [1.25, 1.25, 1.25]  # Standard abdomen CT spacing (x, y, z in mm)
+  conversion_backend: "sitk"
+  # Slice selection - automatically select middle slices
+  slice_selection:
+    enabled: true
+    slices: 384  # Select middle 192 slices for abdomen CT
+
+# External exporter configuration
+# Use one of: lz4_fast, video_hevc, torch
+exporter_config: "video_hevc"  # PyTorch tensor export (dtype configured in exporters/torch.yaml)
+
+# Logging
+logging:
+  level: "INFO"
+  file: null
