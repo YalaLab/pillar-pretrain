@@ -1,6 +1,6 @@
-# Pillar-Pretrain
+# pillar-pretrain
 
-This repository contains the code for training the Pillar0 model on the Merlin ABD-CT dataset.
+This repository contains the pretraining code for the Pillar-0 model.
 
 ## Installation
 
@@ -21,7 +21,7 @@ uv pip install -e ../rad-vision-engine
 ```
 
 ## Data + Text Cache
-### Vision cache generation
+### Vision cache generation for Merlin-Abd-CT
 ```bash
 uv run vision-engine process --config ../rad-vision-engine/configs/ct_abdomen.yaml --input-series-csv data/merlin/accessions.csv --output data/merlin/merlin_cache_1.5mm --workers 128
 ```
