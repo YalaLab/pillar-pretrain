@@ -203,40 +203,14 @@ class Pillar:
             processed_series = rve.load_sample(row['output_path'],  use_hardware_acceleration=False)
 
             D, H, W = processed_series.shape
-            # Center-crop or pad depth (D) to target_d
-            if D > self.target_d:
-                crop_front = (D - self.target_d) // 2
-                crop_back = D - self.target_d - crop_front
-                processed_series = processed_series[crop_front:D - crop_back, :, :]
-            elif D < self.target_d:
-                pad_total = self.target_d - D
-                pad_front = pad_total // 2
-                pad_back = pad_total - pad_front
-                processed_series = F.pad(processed_series, (0, 0, 0, 0, pad_front, pad_back))
-            # Update dims after D adjustment
-            _, H, W = processed_series.shape
-            # Center-crop or pad height (H) to target_h
             if H > self.target_h:
-                crop_top = (H - self.target_h) // 2
-                crop_bottom = H - self.target_h - crop_top
-                processed_series = processed_series[:, crop_top:H - crop_bottom, :]
-            elif H < self.target_h:
-                pad_total_h = self.target_h - H
-                pad_top = pad_total_h // 2
-                pad_bottom = pad_total_h - pad_top
-                processed_series = F.pad(processed_series, (0, 0, pad_top, pad_bottom, 0, 0))
-            # Update dims after H adjustment
-            _, _, W = processed_series.shape
-            # Center-crop or pad width (W) to target_w
-            if W > self.target_w:
-                crop_left = (W - self.target_w) // 2
-                crop_right = W - self.target_w - crop_left
-                processed_series = processed_series[:, :, crop_left:W - crop_right]
-            elif W < self.target_w:
-                pad_total_w = self.target_w - W
-                pad_left = pad_total_w // 2
-                pad_right = pad_total_w - pad_left
-                processed_series = F.pad(processed_series, (pad_left, pad_right, 0, 0, 0, 0))
+                crop_side = (H - self.target_h) // 2
+                processed_series = processed_series[:, crop_side:-crop_side, crop_side:-crop_side]
+            if D < self.target_d:
+                pad_total = self.target_d - D
+                pad_left = pad_total // 2
+                pad_right = pad_total - pad_left  # Handles odd padding amounts
+                processed_series = F.pad(processed_series, (0, 0, 0, 0, pad_left, pad_right))
 
             x = rve.apply_windowing(processed_series, "all", "CT").unsqueeze(0)
             with torch.no_grad():
