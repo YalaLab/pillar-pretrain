@@ -20,6 +20,16 @@ cd ../pillar-pretrain
 uv pip install -e ../rad-vision-engine
 ```
 
+## Running Pillar 
+To run Pillar on the CT modalities, pass in a CSV that contains the column `"series_path"`. The path can be to either a DICOM directory or a NiFTI file.
+```python 
+from demo import Pillar
+
+pillar = Pillar(anatomy="abdomen_ct") # "abdomen_ct", "chest_ct", "head_ct"
+
+embeddings = pillar.predict(inputs_csv_path="/path/to/csv")
+```
+
 ## Data + Text Cache
 ### Vision cache generation for Merlin-Abd-CT
 ```bash
