@@ -46,7 +46,7 @@ def build_inline_rave_config(anatomy: str) -> dict:
         cfg["processing"]["slice_selection"] = {"enabled": True, "slices": 384}
         cfg["exporter_config"] = "video_hevc"
         return cfg
-    if anatomy == "head_ct" or anatomy == "brain_ct":
+    if anatomy == "head_ct":
         cfg = dict(base)
         cfg["anatomy"] = "brain"
         cfg["processing"] = dict(base["processing"])
@@ -54,35 +54,71 @@ def build_inline_rave_config(anatomy: str) -> dict:
         cfg["processing"]["resampling"] = {"target_spacing": [0.5, 0.5, 1.25]}
         cfg["processing"]["slice_selection"] = {"enabled": True, "slices": 128}
         return cfg
+    if anatomy == "breast_mr":
+        cfg = dict(base)
+        cfg["anatomy"] = "breast"
+        cfg["processing"] = dict(base["processing"])
+        cfg["processing"]["crop_pad"] = {"size": [384, 384]}
+        cfg["processing"]["resampling"] = {"target_spacing": [1.0, 1.0, 1.0]}
+        cfg["processing"]["slice_selection"] = {"enabled": True, "slices": 192}
+        return cfg
     return build_inline_rave_config("chest_ct")
 
-def build_video_hevc_exporter_config() -> dict:
+def build_video_hevc_exporter_config(modality: str) -> dict:
     """
     Build an inline exporter configuration for HEVC (H.265) video codec.
     """
-    return {
-        "compression": "video",
-        "video": {
-            "codec": "libx265",
-            "bit_depth": 10,
-            "crf": 6,
-            "gop_size": 128,
-            "hu_min": -1024,
-            "hu_max": 3071,
-            "preset": "ultrafast",
-            "archive": False,
-        },
-        "parallel": {
-            "workers": 32,
-        },
-        "logging": {
-            "level": "INFO",
-        },
-        "output": {
-            "extension": ".mp4",
-            "overwrite": False,
-        },
-    }
+    if modality == "CT":
+        return {
+            "compression": "video",
+            "video": {
+                "codec": "libx265",
+                "bit_depth": 10,
+                "crf": 6,
+                "gop_size": 128,
+                "hu_min": -1024,
+                "hu_max": 3071,
+                "preset": "ultrafast",
+                "archive": False,
+            },
+            "parallel": {
+                "workers": 32,
+            },
+            "logging": {
+                "level": "INFO",
+            },
+            "output": {
+                "extension": ".mp4",
+                "overwrite": False,
+            },
+        }
+    elif modality == "MR":
+        return {
+            "compression": "video",
+            "video": {
+                "codec": "libx265",
+                "bit_depth": 10,
+                "crf": 6,
+                "gop_size": 128,
+                "hu_min": 0,
+                "hu_max": 65535,
+                "preset": "ultrafast",
+                "archive": False,
+                "lossless": False,
+            },
+            "parallel": {
+                "workers": 32,
+            },
+            "logging": {
+                "level": "INFO",
+            },
+            "output": {
+                "extension": ".mp4",
+                "overwrite": False,
+            },
+        }
+    else: 
+        raise ValueError(f"Unsupported modality: {modality}")
 
 def run_vision_engine_process(
     config_path: str,
@@ -132,7 +168,7 @@ def preprocess_inputs(
     extra_args: Optional[List[str]] = None,
 ) -> str:
     # Build exporter config and write to file
-    exporter_cfg = build_video_hevc_exporter_config()
+    exporter_cfg = build_video_hevc_exporter_config(modality=anatomy.split("_")[1].upper())
     exporter_cfg_path = _write_exporter_config_to_file(exporter_cfg, output_dir)
     # Build main inline config and reference exporter path
     inline_cfg = build_inline_rave_config(anatomy)
@@ -151,6 +187,7 @@ anatomy_mapping = {
     "chest_ct": "YalaLab/Pillar0-ChestCT",
     "abdomen_ct": "YalaLab/Pillar0-AbdomenCT",
     "head_ct": "YalaLab/Pillar0-HeadCT",
+    "breast_mr": "YalaLab/Pillar0-BreastMRI",
 }
 
 class Pillar:
@@ -180,7 +217,7 @@ class Pillar:
 
 
     def predict(self, inputs_csv_path=None, **extras):
-        embeddings = {"input": [], "embedding": []}
+        embeddings = {"sample_name": [], "output_path": [], "embedding": []}
 
         inputs = pd.read_csv(inputs_csv_path)
         mapping_csv = preprocess_inputs(
@@ -191,6 +228,9 @@ class Pillar:
         )
         processed = pd.read_csv(mapping_csv)
         inputs = inputs.merge(processed, left_on="series_path", right_on="source_path")
+        if "sample_name" in inputs and self.anatomy == "breast_mr":
+            inputs = inputs[["sample_name", "series", "output_path"]].groupby("sample_name").agg(list).reset_index()[["sample_name", "series", "output_path"]]
+            inputs['output_path'] = inputs.apply(lambda x: {pair[0]: pair[1] for pair in zip(x['series'], x['output_path'])}, axis=1)
         progress_bar = tqdm(inputs.iterrows(), total=len(inputs), desc="Generating Embeddings")
 
         batch = {"anatomy": [self.anatomy]}
@@ -198,21 +238,40 @@ class Pillar:
         for row in progress_bar:
             if len(row) == 2:
                 row = row[1]
-            embeddings["input"].append(row.get('series_path', None))
+            embeddings["sample_name"].append(row.get('sample_name', None))
+            embeddings["output_path"].append(row.get('output_path', None))
 
-            processed_series = rve.load_sample(row['output_path'],  use_hardware_acceleration=False)
+            if "ct" in self.anatomy.lower():
+                processed_series = rve.load_sample(row['output_path'],  use_hardware_acceleration=False)
+                processed_series = processed_series.unsqueeze(0)
+            elif self.anatomy == "breast_mr":
+                processed_series = []
+                for serie in ["T1FS", "T2FS", "Ph2"]:
+                    processed_series.append(rve.load_sample(row['output_path'][serie],  use_hardware_acceleration=False))
+                processed_series = torch.stack(processed_series, dim=0)
+                print(processed_series.shape)
+            else:
+                raise ValueError(f"Unsupported modality: {self.anatomy}")
 
-            D, H, W = processed_series.shape
+            _, D, H, W = processed_series.shape
             if H > self.target_h:
                 crop_side = (H - self.target_h) // 2
-                processed_series = processed_series[:, crop_side:-crop_side, crop_side:-crop_side]
+                processed_series = processed_series[:, :, crop_side:-crop_side, crop_side:-crop_side]
             if D < self.target_d:
                 pad_total = self.target_d - D
                 pad_left = pad_total // 2
                 pad_right = pad_total - pad_left  # Handles odd padding amounts
-                processed_series = F.pad(processed_series, (0, 0, 0, 0, pad_left, pad_right))
+                processed_series = F.pad(processed_series, (0, 0, 0, 0, pad_left, pad_right, 0, 0))
 
-            x = rve.apply_windowing(processed_series, "all", "CT").unsqueeze(0)
+            if "ct" in self.anatomy.lower():
+                x = rve.apply_windowing(processed_series[0], "all", "CT").unsqueeze(0)
+            elif self.anatomy == "breast_mr":
+                x = torch.zeros((1, 3, D, H, W), device=processed_series.device, dtype=torch.float32)
+                for i in range(3):
+                    x[:, i] = rve.apply_windowing(processed_series[i], "high_contrast", "MR").to(device=x.device, dtype=torch.float32).unsqueeze(0)
+            else:
+                raise ValueError(f"Unsupported modality: {self.anatomy}")
+
             with torch.no_grad():
                 image = torch.as_tensor(x)
                 x_dict = {self.anatomy: image}
