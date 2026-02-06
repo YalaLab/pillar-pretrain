@@ -622,6 +622,7 @@ def main(args):
     resume_latest = args.resume == "latest"
     log_base_path = os.path.join(args.logs, args.name)
     args.log_path = None
+    should_exit = False
     if is_master(args, local=args.log_local):
         os.makedirs(log_base_path, exist_ok=True)
         log_filename = f"out-{args.rank}" if args.log_local else "out.log"
@@ -630,7 +631,11 @@ def main(args):
             print(
                 "Error. Experiment already exists. Use --name {} to specify a new experiment."
             )
-            return -1
+            should_exit = True
+    if args.distributed:
+        should_exit = broadcast_object(args, should_exit)
+    if should_exit:
+        return -1
 
     # Setup text logger
     args.log_level = logging.DEBUG if args.debug else logging.INFO
