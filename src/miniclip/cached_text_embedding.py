@@ -330,6 +330,17 @@ class CachedTextEmbedding:
         """Save an embedding tensor to cache and return its path."""
         tensor_path = self._get_tensor_path(cache_key)
         
+        # Detach per-sample tensors from any shared (batch) backing storage before save.
+        # Per-batch embeddings are row VIEWS into a [batch, dim] tensor; torch.save persists
+        # the whole underlying storage, bloating each .pt to batch_size*dim (e.g.
+        # 128*4096*4B ~= 2MB vs 16KB). clone() gives each row its own contiguous storage.
+        def _compact(t):
+            return t.detach().cpu().clone().contiguous() if torch.is_tensor(t) else t
+        if isinstance(embedding, dict):
+            embedding = {k: _compact(v) for k, v in embedding.items()}
+        else:
+            embedding = _compact(embedding)
+
         # Save tensor
         torch.save(embedding, tensor_path)
         
