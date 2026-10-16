@@ -46,6 +46,14 @@ All training happens through the provided script:
 bash train_unimodal_pillar0_merlin_abd_ct_1node.sh
 ```
 
+### Multi-scale routing
+
+Atlas passes messages between scales: each window's summary goes up to the token for that window, each window attends to the coarser window above it, and each coarser token cross-attends to the window it summarises. With `"spatial_routing": true` in `atlas_args`, every one of these messages goes to the token or window that covers the same place in the volume. Without it (the default, and how the released Pillar-0 checkpoints were trained), the windows are paired by their index in memory. For a new pretraining run, use the `_spatial` config:
+
+```bash
+--model "Qwen3-Embedding-8B-Atlas_small_d2d2d8_multiscale__pillar0_multimodal_ucsf_abd_ct_multiwindow_spatial"
+```
+
 # Citation
 If you use this code in your research, please cite the following paper:
 

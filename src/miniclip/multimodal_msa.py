@@ -325,9 +325,38 @@ class RelativePosEmb(nn.Module):
         return x
 
 
+def parent_window_index(fine_grid, coarse_grid, batch_size, device=None):
+    """
+    For every window of a finer scale, the index of the coarser-scale window that covers it.
+
+    Windows are stored in raster order over their grid, batch-major ("(b g0 g1 g2)"), so the
+    64 windows under one coarser window are not contiguous. Returns a LongTensor of length
+    batch_size * prod(fine_grid) that indexes the coarser scale's (batch * windows) axis.
+    """
+    fine_grid, coarse_grid = list(fine_grid), list(coarse_grid)
+    n_fine = math.prod(fine_grid)
+    ratio = [f // c for f, c in zip(fine_grid, coarse_grid)]
+    idx = torch.arange(n_fine, device=device)
+    coords = []
+    for size in reversed(fine_grid):
+        coords.append(idx % size)
+        idx = idx // size
+    coords = coords[::-1]
+    parent = torch.zeros(n_fine, dtype=torch.long, device=device)
+    for c, r, size in zip(coords, ratio, coarse_grid):
+        parent = parent * size + c // r
+    batch = torch.arange(batch_size, device=device)[:, None] * math.prod(coarse_grid)
+    return (batch + parent[None]).reshape(-1)
+
+
 class MultiScaleAttentionBlock(nn.Module):
     """
     MultiScaleAttentionBlock: Implements multi-scale attention with various communication protocols.
+
+    spatial_routing=False reproduces the released Pillar-0 checkpoints. With True, every message
+    between scales goes to the token or window that covers the same place: the bottom-up
+    summaries and the one-to-one cross-attention read grid sizes in tensor-axis order, and the
+    top-down attention gives each window the keys of the coarser window above it.
     """
 
     def __init__(
@@ -349,9 +378,11 @@ class MultiScaleAttentionBlock(nn.Module):
         ignore_registers=False,
         accumulate_window_summary=True,
         num_scales=None,
+        spatial_routing=False,
         **kwargs,
     ):
         super().__init__()
+        self.spatial_routing = spatial_routing
         self._init_basic_config(
             dim,
             num_heads,
@@ -484,13 +515,23 @@ class MultiScaleAttentionBlock(nn.Module):
             current_stage = rearrange(
                 current_stage, "(b nw) c m0 m1 m2 -> b nw m0 m1 m2 c", nw=nw
             )
-            current_stage = rearrange(
-                current_stage,
-                "b (d h w) m0 m1 m2 c -> b (d m0) (h m1) (w m2) c",
-                h=current_grid_size[0],
-                w=current_grid_size[1],
-                d=current_grid_size[2],
-            )
+            if self.spatial_routing:
+                # grid sizes are in tensor-axis order, the order the windows were written in
+                current_stage = rearrange(
+                    current_stage,
+                    "b (g0 g1 g2) m0 m1 m2 c -> b (g0 m0) (g1 m1) (g2 m2) c",
+                    g0=current_grid_size[0],
+                    g1=current_grid_size[1],
+                    g2=current_grid_size[2],
+                )
+            else:
+                current_stage = rearrange(
+                    current_stage,
+                    "b (d h w) m0 m1 m2 c -> b (d m0) (h m1) (w m2) c",
+                    h=current_grid_size[0],
+                    w=current_grid_size[1],
+                    d=current_grid_size[2],
+                )
 
             # Handle different spatial dimensions
             d, h, w = current_stage.shape[1:4]
@@ -564,6 +605,7 @@ class MultiScaleAttentionBlock(nn.Module):
 
         scales = self.propagate_bottom_up(scales, grid_sizes, merge_ratio, local2global)
         self.out_scales = {}
+        self._grid_sizes = grid_sizes
 
         # message passing from higher to lower level scales
         for S in range(self.num_scales - 1, -1, -1):
@@ -595,6 +637,7 @@ class MultiScaleAttentionBlock(nn.Module):
         out_scales = [self.out_scales[S]["tokens"] for S in range(self.num_scales)]
         self.out_scales = {}
         self.cache_qkv = {}
+        self._grid_sizes = None
         return out_scales
 
     def _aggregate_one2one_xattn(self, S, multiscale_layout=None):
@@ -606,6 +649,11 @@ class MultiScaleAttentionBlock(nn.Module):
 
         q_S = self.get_qkv(x_S, S, keys=["q"])[0]
         k_Sm1, v_Sm1 = self.get_qkv(x_Sm1, S - 1, keys=["kv"])
+
+        if self.spatial_routing:
+            xattn_l2g = self._one2one_spatial(S, q_S, k_Sm1, v_Sm1, multiscale_layout)
+            x_S = self.blocks[S].skip_with_drop(x_S, xattn_l2g)
+            return self.blocks[S].mlp_residual(x_S)
 
         kH, kW, kD = multiscale_layout[S]["grid_size"]
         mH, mW, mD = multiscale_layout[S]["window_dims"]
@@ -657,6 +705,38 @@ class MultiScaleAttentionBlock(nn.Module):
 
         return x_S
 
+    def _one2one_spatial(self, S, q_S, k_Sm1, v_Sm1, multiscale_layout):
+        """
+        Each scale-S token cross-attends to the scale-(S-1) window it summarises.
+        Grid sizes and window dims are in tensor-axis order, as the tokens were written.
+        """
+        k0, k1, k2 = multiscale_layout[S]["grid_size"]
+        m0, m1, m2 = multiscale_layout[S]["window_dims"]
+        s0, s1, s2 = multiscale_layout[S - 1]["grid_size"]
+        # scale-S tokens back on their grid, then one query per finer window, in raster order
+        q_S = rearrange(
+            q_S,
+            "(b k0 k1 k2) h (m0 m1 m2) c -> b h (k0 m0) (k1 m1) (k2 m2) c",
+            k0=k0, k1=k1, k2=k2, m0=m0, m1=m1, m2=m2,
+        )
+        q_S = rearrange(
+            q_S,
+            "b h (s0 n0) (s1 n1) (s2 n2) c -> (b s0 s1 s2) h (n0 n1 n2) c",
+            s0=s0, s1=s1, s2=s2,
+        )
+        n0, n1, n2 = (k0 * m0) // s0, (k1 * m1) // s1, (k2 * m2) // s2
+        out = self.blocks[S].xattn_qkv(q_S, k_Sm1, v_Sm1)
+        out = rearrange(
+            out,
+            "(b s0 s1 s2) (n0 n1 n2) c -> b (s0 n0) (s1 n1) (s2 n2) c",
+            s0=s0, s1=s1, s2=s2, n0=n0, n1=n1, n2=n2,
+        )
+        return rearrange(
+            out,
+            "b (k0 m0) (k1 m1) (k2 m2) c -> (b k0 k1 k2) (m0 m1 m2) c",
+            k0=k0, k1=k1, k2=k2,
+        )
+
     def _process__sequential__all2all_sattn(self, x_S, S):
         # get the QKV for x_S
         q_S, k_S, v_S = self.get_qkv(x_S, S)
@@ -667,8 +747,19 @@ class MultiScaleAttentionBlock(nn.Module):
                 x_t = out_t["tokens"]
                 num_repeats = x_S.shape[0] // x_t.shape[0]
                 k_t, v_t = self.get_qkv(x_t, T, keys=["kv"])
-                k_t = k_t.repeat_interleave(num_repeats, dim=0)
-                v_t = v_t.repeat_interleave(num_repeats, dim=0)
+                if self.spatial_routing:
+                    # window i of scale S reads the scale-T window that covers it
+                    batch_size = x_S.shape[0] // math.prod(self._grid_sizes[S])
+                    parent = parent_window_index(
+                        self._grid_sizes[S], self._grid_sizes[T], batch_size, device=k_t.device
+                    )
+                    k_t = k_t.index_select(0, parent)
+                    v_t = v_t.index_select(0, parent)
+                else:
+                    # contiguous runs of windows: the window above only when the coarser
+                    # scale is a single window
+                    k_t = k_t.repeat_interleave(num_repeats, dim=0)
+                    v_t = v_t.repeat_interleave(num_repeats, dim=0)
 
                 k_Sp1.append(k_t)
                 v_Sp1.append(v_t)
@@ -731,6 +822,7 @@ class AtlasStage(nn.Module):
         attn_drop: float = 0.0,
         drop_path: Union[float, List[float]] = 0.0,
         num_scales=None,
+        spatial_routing=False,
         **kwargs,
     ):
         """Initialize the AtlasStage.
@@ -763,6 +855,7 @@ class AtlasStage(nn.Module):
                     drop_path=drop_path_rates[i],
                     weight_share=False,
                     num_scales=num_scales,
+                    spatial_routing=spatial_routing,
                 )
                 for i in range(depth)
             ]

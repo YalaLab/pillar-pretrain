@@ -12,6 +12,40 @@ from .multimodal_msa import AtlasStage
 logger = logging.getLogger(__name__)
 
 
+def spatial_multiscale_layout(img_size, merge_ratio, local2global, patch_size):
+    """
+    The same layout as prepare_multiscale_layout, computed per tensor axis: axis i uses
+    patch_size[i], merge_ratio[i] and local2global[i], the factors the stem and
+    _build_multiscale_tokens apply to that axis. grid_size and window_dims are in
+    tensor-axis order. For uniform ratios the numbers equal the legacy layout's.
+    """
+    tokens = [s // p for s, p in zip(img_size, patch_size)]
+    seqlen = math.prod(tokens)
+    min_seqlen = math.prod(merge_ratio)
+    if seqlen <= min_seqlen:
+        return [{"grid_size": [1, 1, 1], "window_size": seqlen, "num_windows": 1,
+                 "seq_length": seqlen, "window_dims": tokens}]
+    num_stages = math.ceil(math.log2(seqlen / min_seqlen) / math.log2(math.prod(local2global))) + 1
+    layout, k = [], [1, 1, 1]
+    for _ in range(num_stages):
+        n = [t // kk for t, kk in zip(tokens, k)]
+        if n == list(merge_ratio):
+            layout.append({"grid_size": [1, 1, 1], "window_size": math.prod(n), "num_windows": 1,
+                           "seq_length": math.prod(n), "window_dims": n})
+            break
+        if all(ni >= mi for ni, mi in zip(n, merge_ratio)):
+            grid = [ni // mi for ni, mi in zip(n, merge_ratio)]
+            layout.append({"grid_size": grid, "window_size": math.prod(merge_ratio),
+                           "num_windows": math.prod(grid), "seq_length": math.prod(n),
+                           "window_dims": list(merge_ratio)})
+        else:
+            layout.append({"grid_size": [1, 1, 1], "window_size": math.prod(n), "num_windows": 1,
+                           "seq_length": math.prod(n), "window_dims": n})
+            break
+        k = [kk * l for kk, l in zip(k, local2global)]
+    return layout
+
+
 class MultiModalAtlas(nn.Module):
     def __init__(
         self,
@@ -55,6 +89,9 @@ class MultiModalAtlas(nn.Module):
         self.embed_dim = embed_dim
         self.model_config = model_config
         assert self.model_config is not None, "model_config should be provided"
+        # False reproduces the released Pillar-0 checkpoints; True routes every cross-scale message
+        # to the token or window that covers the same place (see MultiScaleAttentionBlock)
+        self.spatial_routing = self.model_config["model"]["atlas_args"].get("spatial_routing", False)
 
         self._init_patch_embeds()
         self._init_atlas_stages()
@@ -114,11 +151,15 @@ class MultiModalAtlas(nn.Module):
                     m1=merge_ratio[1],
                     m2=merge_ratio[2],
                 )
-                grid_size = [
-                    x_scale_win.shape[2],
-                    x_scale_win.shape[3],
-                    x_scale_win.shape[1],
-                ]
+                if getattr(self, "spatial_routing", False):
+                    # windows per axis, in tensor-axis order (the order they are written in)
+                    grid_size = list(x_scale_win.shape[1:4])
+                else:
+                    grid_size = [
+                        x_scale_win.shape[2],
+                        x_scale_win.shape[3],
+                        x_scale_win.shape[1],
+                    ]
                 x_scale_win = rearrange(
                     x_scale_win, "b d h w m0 m1 m2 c -> (b d h w) (m0 m1 m2) c"
                 )
@@ -142,6 +183,8 @@ class MultiModalAtlas(nn.Module):
         prepare the layout for multiscale attention and config
         for the architecture
         """
+        if getattr(self, "spatial_routing", False):
+            return spatial_multiscale_layout(img_size, merge_ratio, local2global, patch_size)
         H, W, D = img_size
         pH, pW, pD = patch_size
         lD, lH, lW = local2global
@@ -236,6 +279,10 @@ class MultiModalAtlas(nn.Module):
             local2global=local2global,
             patch_size=patch_size,
         )
+        if self.spatial_routing:
+            # the tokenizer and the layout must describe the same windows
+            assert [list(g) for g in grid_sizes] == [l["grid_size"] for l in multiscale_layout], (
+                grid_sizes, multiscale_layout)
         grid_sizes = [layout["grid_size"] for layout in multiscale_layout]
 
         multiscale_feats = []
